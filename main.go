@@ -232,8 +232,8 @@ func main() {
 
 	// Close TCP Connection - Hopefuly hole punching is done
 	conn.Close()
-	localIp := "0.0.0.0" + strconv.Itoa(int(srcPort))
-	dstIp := ip + strconv.Itoa(int(dstPort))
+	localIp := "0.0.0.0:" + strconv.Itoa(int(srcPort))
+	dstIp := ip + ":" + strconv.Itoa(int(dstPort))
 
 	var mode string
 	fmt.Println("Syn Packet Sent")
