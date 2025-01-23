@@ -120,6 +120,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+    stun "github.com/ccding/go-stun/stun"
 )
 
 type TCP struct {
@@ -156,6 +157,16 @@ func main() {
 	var ip string
 	var srcPort uint16
 	var dstPort uint16
+
+	client := stun.NewClient()
+    client.SetServerAddr("stun.l.google.com:19302")
+    client.SetLocalPort(8090)
+    client.SetLocalIP("0.0.0.0")
+
+    nat, host, err := client.Discover()
+    fmt.Println(nat.String())
+    fmt.Println(host)
+    fmt.Println(err)
 
 	fmt.Println("Hello World...")
 	fmt.Print("Enter IP: ")
