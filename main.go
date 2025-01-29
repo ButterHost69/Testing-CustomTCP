@@ -113,6 +113,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
@@ -120,7 +121,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-    stun "github.com/ccding/go-stun/stun"
+
+	stun "github.com/ccding/go-stun/stun"
 )
 
 type TCP struct {
@@ -152,6 +154,117 @@ func handleConnection(conn *net.TCPConn) {
 		conn.Write(buf[:n])
 	}
 }
+
+// Attempt - 3
+func CalculateTCPHeaderChecksum(src_ip, dst_ip net.IP, data []byte) uint16{
+	pseudo_header := make([]byte, 12)
+
+	fmt.Println("Checksum Source IP: ", src_ip.To4())
+	fmt.Println("Checksum Destination IP: ", dst_ip.To4())
+
+	copy(pseudo_header[0:4], src_ip.To4()) // IP.To4() returns a slice of bytes
+	copy(pseudo_header[4:8], dst_ip.To4())
+	pseudo_header[8] = 0 // Extra `0` Padding
+	pseudo_header[9] = 6 // Set Protocol to 6
+
+	// Calculate Header + Data length
+	// len() returns 32bit int -> Convert to 16
+	//tcp_length16 := uint16(len(data))
+	binary.BigEndian.PutUint16(pseudo_header[10:], uint16(len(data)))
+	// pseudo_header[10] = tcp_length16 >> 8
+	// pseudo_header[11] = uint8(byte(tcp_length16) & 0x00ff)
+
+	fmt.Println("Pseaudo Header Bits: ", pseudo_header)
+
+	data = append(data, pseudo_header...)
+
+	checksum := uint32(0)
+
+	fmt.Println("Calculating Checksum: ")
+	for i := 0 ; i < len(data) - 3 ; i += 4 {
+		byte32 := uint32(data[i]) << 24 + uint32(data[i + 1]) << 16 + uint32(data[i + 2]) << 8 + uint32(data[i + 3])
+		fmt.Println("Convert Data to 32 bit: ", byte32)
+		
+		checksum += byte32
+	}
+
+	// If the len of data is not divisible by 4 - Add Padded Bits to data and add to checksum - FIXME: Could Fail as data should ideally be in 16bit. Soln: Create a separaet overflow manager
+	if len(data) % 4 != 0 {
+		fmt.Println("Checksum Need Padded Data Bits: ")
+		extra_bytes := (len(data) % 4)
+
+		byte32 := uint32(0)
+		for i := len(data) - extra_bytes ; i < len(data) ; i ++ {
+			byte32 = byte32 << 8 // FIXME: Could be incorrect - maybe the shift is wrong
+			byte32 += uint32(data[i])
+		}
+
+		fmt.Println("Extra Padded Bits Value: ", byte32)
+		checksum += byte32
+	}
+
+	fmt.Println("Checksum Sum: ", checksum)
+
+	// Fold 32 bit checksum - Add any bit in pos > 16 to the end until num is 16 bits long
+	for checksum > 0xffff {
+		extra := checksum >> 16
+		fmt.Println("Extra Bit: ", extra)
+		fmt.Println("Masked: ", checksum & 0xffff)
+		checksum = (checksum & 0xffff) + extra
+	}
+
+	fmt.Println("Folded Checksum: ", checksum)
+
+	var finalChecksum uint16
+	// finalChecksum = ^uint16(checksum)
+	finalChecksum = ^uint16(checksum + 1) // Temp dont + 1
+	fmt.Println("Final Complement Checksum: ", finalChecksum)
+
+	return finalChecksum
+}
+
+// func CalculateTCPHeaderChecksum(data []byte) uint16 {
+// 	fmt.Println("Calculating Checksum")
+// 	finalChecksum := uint16(0)
+
+// 	// Iterate through the data in 16-bit chunks
+// 	for i := 0; i < len(data); i += 2 {
+// 		// Take the current byte and the next byte, if available
+// 		byte16 := uint16(data[i]) << 8
+// 		if i+1 < len(data) {
+// 			byte16 |= uint16(data[i+1])
+// 		}
+// 		fmt.Println("Current Byte: ", byte16)
+// 		finalChecksum += byte16
+// 	}
+
+// 	// Fold 32-bit result into 16-bit checksum
+// 	for finalChecksum > 0xffff {
+// 		finalChecksum = (finalChecksum >> 16) + (finalChecksum & 0xffff)
+// 	}
+
+// 	// One's complement of the checksum
+// 	finalChecksum = ^finalChecksum
+// 	fmt.Println("Checksum: ", finalChecksum)
+// 	return finalChecksum
+// }
+
+// func CalculateTCPHeaderChecksum(data []byte) uint16 {
+// 	fmt.Println("Calculating Checksum")
+// 	finalChecksum := uint16(0)
+// 	i := 1
+// 	for i = 1 ; i <= len(data) ; i *= 2{
+// 		fmt.Println("Itr Number: ", i)
+// 		byte16 := uint16(data[i-1]) << 8 | uint16(data[i])
+// 		fmt.Println("Current Byte: ", byte16)
+// 		finalChecksum += byte16
+// 	}
+
+// 	fmt.Println("Checksum: ",finalChecksum)
+// 	finalChecksum = ^finalChecksum
+// 	fmt.Println("Complement Checksum: ",finalChecksum)
+// 	return finalChecksum
+// }
 
 func main() {
 	var ip string
@@ -192,15 +305,16 @@ func main() {
 	// Craft TCP Packet - SYN Packet
 	// s := fmt.Sprintf("%b", 80)
 	tcpPacket := TCP{
-		SourcePort: srcPort,
-		DestPort:   dstPort,
+		SourcePort: srcPort, // uint16
+		DestPort:   dstPort, // uint16
 		SeqNumber:  uint32(1001),
 		AckNumber:  uint32(0),
 		// Set DataOffset to 5, which is the correct value for a TCP header with no options
-		DataOffset: 0x50, // This will be 80 in decimal or 0x50
-		Flags:      0x02,
+		DataOffset: 0x50, // This will be 80 in decimal or 0x50 - uint8
+		Flags:      0x02, // uint8
 		WindowSize: uint16(5840),
-		UrgentPtr:  0,
+		Checksum: uint16(0),
+		UrgentPtr:  0, // uint16
 	}
 
 	tcpByte := []byte{
@@ -218,6 +332,10 @@ func main() {
 		byte(tcpPacket.UrgentPtr >> 8), byte(tcpPacket.UrgentPtr & 0xff),
 	}
 
+	checksum := CalculateTCPHeaderChecksum(net.ParseIP("192.168.29.182"), pip, tcpByte)
+	tcpByte[16] = byte(checksum >> 8)
+	tcpByte[17] = byte(checksum & 0x00ff)
+	fmt.Println("Checksum: ", checksum)
 	fmt.Println("TCP Packet: ", tcpPacket)
 	fmt.Println("Offset: ", tcpPacket.DataOffset)
 	fmt.Println("TCP byte: ", tcpByte)
@@ -235,10 +353,13 @@ func main() {
 	}
 
 
-	// Send the crafted TCP packet
-	_, err = conn.Write(tcpByte)
-	if err != nil {
-		log.Fatal("Error in Sending: ", err)
+	//Send the crafted TCP packet
+	for i := range(5) {
+		fmt.Println("Attempt Number: ", i )
+		_, err = conn.Write(tcpByte)
+		if err != nil {
+			log.Fatal("Error in Sending: ", err)
+		}
 	}
 
 	// Close TCP Connection - Hopefuly hole punching is done
@@ -249,6 +370,7 @@ func main() {
 	var mode string
 	fmt.Println("Syn Packet Sent")
 	fmt.Print("Enter TCP Mode [(d)Dial / (r)Recieve]: ")
+	fmt.Scan(&mode)
 	if mode == "d" {
 		// Define source address
 
